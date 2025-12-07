@@ -4,13 +4,21 @@ const publicacionesControlador = require('../controladores/publicacionesControla
 const upload = require('../middlewares/uploadFiles');
 const autenticar = require('../middlewares/auth');
 
-router.post('/crear', autenticar, upload.array('archivos', 10), publicacionesControlador.registrarPublicacion);
+const uploadCampos = upload.fields([
+    { name: 'portada', maxCount: 1 },
+    { name: 'archivos', maxCount: 10 }
+]);
+
+router.post('/crear', autenticar, uploadCampos, publicacionesControlador.registrarPublicacion);
 router.get('/ver/:id_publi', autenticar, publicacionesControlador.verPublicacion);
-router.put('/actualizar/:id_publi', autenticar, upload.array('archivos', 10), publicacionesControlador.actualizarPublicacion);
+router.put('/actualizar/:id_publi', autenticar, uploadCampos, publicacionesControlador.actualizarPublicacion);
 router.delete('/eliminar/:id_publi', autenticar, publicacionesControlador.eliminarPublicacion);
 router.get('/listar', autenticar, publicacionesControlador.listarPublicaciones);
 router.post('/calificar', autenticar, publicacionesControlador.calificarPublicacion);
 router.post('/comentar', autenticar, publicacionesControlador.comentarPublicacion);
 router.post('/eliminar-comentario', autenticar, publicacionesControlador.eliminarComentario);
+// Se llaman cada vez que alguien abre el PDF o entra al detalle
+router.post('/:id_publi/vista', autenticar, publicacionesControlador.incrementarVistas);
+router.post('/:id_publi/descarga', autenticar, publicacionesControlador.incrementarDescargas);
 
 module.exports = router;

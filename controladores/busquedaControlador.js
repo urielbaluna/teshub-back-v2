@@ -2,309 +2,215 @@
 
 const pool = require('../config/db');
 
-function busquedaGeneral(req, res) {
+// Helper para formatear tiempos (Implementación completa)
+function tiempoTranscurrido(fecha) {
+    if (!fecha) return 'Reciente';
+    const ahora = new Date();
+    const fechaPub = new Date(fecha);
+    const diffMs = ahora - fechaPub;
+    const diffSeg = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSeg / 60);
+    const diffHoras = Math.floor(diffMin / 60);
+    const diffDias = Math.floor(diffHoras / 24);
+
+    if (diffDias > 0) return `hace ${diffDias} día${diffDias > 1 ? 's' : ''}`;
+    if (diffHoras > 0) return `hace ${diffHoras} hora${diffHoras > 1 ? 's' : ''}`;
+    if (diffMin > 0) return `hace ${diffMin} minuto${diffMin > 1 ? 's' : ''}`;
+    return `hace ${diffSeg} segundo${diffSeg !== 1 ? 's' : ''}`;
+}
+
+// 1. Búsqueda General (Publicaciones + Usuarios)
+exports.busquedaGeneral = async (req, res) => {
     const { palabra } = req.query;
 
-    if (!palabra) {
-        return res.status(400).json({ mensaje: 'Parámetro "palabra" es requerido.' });
-    }
+    if (!palabra) return res.status(400).json({ mensaje: 'El parámetro "palabra" es requerido.' });
 
-    const palabras = palabra.trim().split(/\s+/);
-    let resultados = {};
-    let pendientes = 2;
-    let respondido = false;
+    const terminos = palabra.trim().split(/\s+/);
 
-    function finalizar() {
-        pendientes--;
-        if (pendientes === 0 && !respondido) {
-            respondido = true;
-            res.status(200).json(resultados);
-        }
-    }
+    try {
+        const [publicaciones, usuarios] = await Promise.all([
+            buscarPublicaciones(terminos),
+            buscarUsuarios(terminos)
+        ]);
 
-    // Buscar publicaciones (solo ids primero)
-    const sqlPub = `
-        SELECT * FROM publicacion
-        WHERE ${palabras.map(() => `(nombre LIKE ? OR descripcion LIKE ?)`).join(' OR ')}
-    `;
-    const paramsPub = palabras.flatMap(p => [`%${p}%`, `%${p}%`]);
-    pool.query(sqlPub, paramsPub, (err, pubs) => {
-        if (err && !respondido) {
-            respondido = true;
-            return res.status(500).json({ mensaje: 'Error en la búsqueda de publicaciones', error: err });
-        }
-        if (!pubs.length) {
-            resultados.publicaciones = [];
-            return finalizar();
-        }
-
-        // Obtener archivos, integrantes, comentarios y evaluaciones de todas las publicaciones encontradas
-        const ids = pubs.map(p => p.id_publi);
-
-        // 1. Archivos
-        const sqlArchivos = `SELECT id_publi, ruta FROM archivos WHERE id_publi IN (?)`;
-        pool.query(sqlArchivos, [ids], (errA, archivos) => {
-            if (errA && !respondido) {
-                respondido = true;
-                return res.status(500).json({ mensaje: 'Error al obtener archivos', error: errA });
-            }
-
-            // 2. Integrantes
-            const sqlIntegrantes = `
-                SELECT i.id_publi, u.matricula, u.nombre, u.apellido
-                FROM integrantes i
-                JOIN usuario u ON i.matricula = u.matricula
-                WHERE i.id_publi IN (?)
-            `;
-            pool.query(sqlIntegrantes, [ids], (errI, integrantes) => {
-                if (errI && !respondido) {
-                    respondido = true;
-                    return res.status(500).json({ mensaje: 'Error al obtener integrantes', error: errI });
-                }
-
-                // 3. Comentarios
-                const sqlComentarios = `
-                    SELECT c.id_publi, c.comentario, u.nombre, c.matricula
-                    FROM comentario c
-                    JOIN usuario u ON c.matricula = u.matricula
-                    WHERE c.id_publi IN (?)
-                `;
-                pool.query(sqlComentarios, [ids], (errC, comentarios) => {
-                    if (errC && !respondido) {
-                        respondido = true;
-                        return res.status(500).json({ mensaje: 'Error al obtener comentarios', error: errC });
-                    }
-
-                    // 4. Evaluaciones
-                    const sqlEval = `
-                        SELECT id_publi, AVG(evaluacion) as promedio, COUNT(*) as total
-                        FROM evaluacion
-                        WHERE id_publi IN (?)
-                        GROUP BY id_publi
-                    `;
-                    pool.query(sqlEval, [ids], (errE, evals) => {
-                        if (errE && !respondido) {
-                            respondido = true;
-                            return res.status(500).json({ mensaje: 'Error al obtener evaluaciones', error: errE });
-                        }
-
-                        // Armar publicaciones completas
-                        resultados.publicaciones = pubs.map(pub => {
-                            return {
-                                id_publi: pub.id_publi,
-                                nombre: pub.nombre,
-                                descripcion: pub.descripcion,
-                                fecha: pub.fecha,
-                                archivos: archivos.filter(a => a.id_publi === pub.id_publi).map(a => a.ruta),
-                                integrantes: integrantes
-                                    .filter(i => i.id_publi === pub.id_publi)
-                                    .map(i => ({
-                                        matricula: i.matricula,
-                                        nombre_completo: `${i.nombre} ${i.apellido}`
-                                    })),
-                                comentarios: comentarios
-                                    .filter(c => c.id_publi === pub.id_publi)
-                                    .map(c => ({
-                                        comentario: c.comentario,
-                                        nombre: c.nombre,
-                                        matricula: c.matricula
-                                    })),
-                                calificacion_promedio: (() => {
-                                    const e = evals.find(ev => ev.id_publi === pub.id_publi);
-                                    return e ? Number(e.promedio).toFixed(2) : "0.00";
-                                })(),
-                                total_calificaciones: (() => {
-                                    const e = evals.find(ev => ev.id_publi === pub.id_publi);
-                                    return e ? e.total : 0;
-                                })()
-                            };
-                        });
-
-                        finalizar();
-                    });
-                });
-            });
+        res.status(200).json({
+            publicaciones,
+            perfiles: usuarios
         });
-    });
 
-    // Buscar perfiles
-    const sqlPerf = `
-        SELECT matricula, nombre, apellido, rol, imagen FROM usuario
-        WHERE ${palabras.map(() => `(nombre LIKE ? OR apellido LIKE ? OR correo LIKE ?)`).join(' OR ')}
-    `;
-    const paramsPerf = palabras.flatMap(p => [`%${p}%`, `%${p}%`, `%${p}%`]);
-    pool.query(sqlPerf, paramsPerf, (err, perfiles) => {
-        if (err && !respondido) {
-            respondido = true;
-            return res.status(500).json({ mensaje: 'Error en la búsqueda de perfiles', error: err });
-        }
-
-        if (!perfiles.length) {
-            resultados.perfiles = [];
-            return finalizar();
-        }
-
-        // Para cada perfil, obtener el número de publicaciones y la mejor publicación
-        let pendientesPerfiles = perfiles.length;
-
-        perfiles.forEach((perfil, idx) => {
-            // 1. Contar publicaciones en las que participa
-            const sqlCount = `SELECT COUNT(*) AS total FROM integrantes WHERE matricula = ?`;
-            pool.query(sqlCount, [perfil.matricula], (errCount, countRes) => {
-                if (errCount) {
-                    perfil.total_publicaciones = 0;
-                } else {
-                    perfil.total_publicaciones = countRes[0].total;
-                }
-
-                // 2. Obtener la publicación con mayor evaluación promedio en la que participa
-                const sqlBestPubli = `
-                    SELECT p.id_publi, p.nombre, AVG(e.evaluacion) AS promedio
-                    FROM integrantes i
-                    JOIN publicacion p ON i.id_publi = p.id_publi
-                    LEFT JOIN evaluacion e ON p.id_publi = e.id_publi
-                    WHERE i.matricula = ?
-                    GROUP BY p.id_publi
-                    ORDER BY promedio DESC
-                    LIMIT 1
-                `;
-                pool.query(sqlBestPubli, [perfil.matricula], (errBest, bestRes) => {
-                    if (!errBest && bestRes.length > 0) {
-                        perfil.mejor_publicacion = {
-                            id_publi: bestRes[0].id_publi,
-                            nombre: bestRes[0].nombre,
-                            promedio: bestRes[0].promedio ? Number(bestRes[0].promedio).toFixed(2) : 0
-                        };
-                    } else {
-                        perfil.mejor_publicacion = 0;
-                    }
-
-                    pendientesPerfiles--;
-                    if (pendientesPerfiles === 0) {
-                        resultados.perfiles = perfiles;
-                        finalizar();
-                    }
-                });
-            });
-        });
-    });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error en la búsqueda', error });
+    }
 }
 
-function busquedaEventos(req, res) {
-    const { palabra, lat, lng, radioKm, fecha_inicio, fecha_fin } = req.query;
+// Sub-función para buscar publicaciones
+exports.buscarPublicaciones = async (terminos) => {
+    const conditions = terminos.map(() => `(p.nombre LIKE ? OR p.descripcion LIKE ?)`).join(' OR ');
+    const params = terminos.flatMap(t => [`%${t}%`, `%${t}%`]);
+
+    const sql = `
+        SELECT p.id_publi, p.nombre, p.descripcion, p.fecha, p.imagen_portada, p.vistas, p.descargas,
+               (SELECT AVG(evaluacion) FROM evaluacion WHERE id_publi = p.id_publi) as rating,
+               (SELECT GROUP_CONCAT(CONCAT(u.nombre, ' ', u.apellido) SEPARATOR ', ')
+                FROM integrantes i JOIN usuario u ON i.matricula = u.matricula
+                WHERE i.id_publi = p.id_publi) as autores,
+               (SELECT GROUP_CONCAT(e.nombre SEPARATOR ', ')
+                FROM publicacion_etiquetas pe JOIN etiquetas e ON pe.id_etiqueta = e.id_etiqueta
+                WHERE pe.id_publi = p.id_publi) as tags
+        FROM publicacion p
+        WHERE p.estado = 'aprobado' 
+        AND (${conditions})
+        LIMIT 20
+    `;
+
+    const [rows] = await pool.promise().query(sql, params);
+
+    return rows.map(pub => ({
+        id_publi: pub.id_publi,
+        nombre: pub.nombre,
+        descripcion: pub.descripcion,
+        autor: pub.autores || 'Anónimo',
+        fecha: pub.fecha,
+        hace_cuanto: tiempoTranscurrido(pub.fecha), // <--- ¡AQUÍ LA USAMOS!
+        tags: pub.tags ? pub.tags.split(', ') : [],
+        rating: pub.rating ? Number(pub.rating).toFixed(1) : "0.0",
+        vistas: pub.vistas,
+        imagen_portada: pub.imagen_portada
+    }));
+}
+
+// Sub-función para buscar usuarios
+exports.buscarUsuarios = async (terminos) => {
+    const conditions = terminos.map(() => `(nombre LIKE ? OR apellido LIKE ? OR carrera LIKE ?)`).join(' OR ');
+    const params = terminos.flatMap(t => [`%${t}%`, `%${t}%`, `%${t}%`]);
+
+    const sql = `
+        SELECT matricula, nombre, apellido, imagen, carrera, semestre, rol
+        FROM usuario
+        WHERE estado = 1
+        AND (${conditions})
+        LIMIT 20
+    `;
+
+    const [rows] = await pool.promise().query(sql, params);
+
+    const usuariosCompletos = await Promise.all(rows.map(async (u) => {
+        const [intereses] = await pool.promise().query(
+            `SELECT i.nombre FROM usuario_intereses ui JOIN intereses i ON ui.id_interes = i.id_interes WHERE ui.matricula = ?`, 
+            [u.matricula]
+        );
+        
+        let rolNombre = '';
+        switch (u.rol) {
+            case 1: rolNombre = 'Admin'; break;
+            case 2: rolNombre = 'Asesor'; break;
+            case 3: rolNombre = 'Estudiante'; break;
+        }
+
+        return {
+            ...u,
+            rol: rolNombre,
+            intereses: intereses.map(i => i.nombre)
+        };
+    }));
+
+    return usuariosCompletos;
+}
+
+// 2. Búsqueda de Eventos
+exports.busquedaEventos = async (req, res) => {
+    const { palabra, lat, lng, radioKm, fecha_inicio, fecha_fin, categoria } = req.query;
     const usuarioMat = req.usuario ? req.usuario.matricula : null;
 
-    // Construir SELECT (incluye distancia si proveen lat/lng)
-    let params = [];
-    let distanciaSelect = '';
-    if (lat && lng) {
-        distanciaSelect = `, (6371 * acos(
-            cos(radians(?)) * cos(radians(latitud)) *
-            cos(radians(longitud) - radians(?)) +
-            sin(radians(?)) * sin(radians(latitud))
-        )) AS distancia`;
-        params.push(lat, lng, lat);
+    try {
+        let params = [];
+        let whereClauses = ['1=1'];
+        let selectDistancia = '';
+
+        if (palabra) {
+            const terminos = palabra.trim().split(/\s+/);
+            const textConditions = terminos.map(() => `(titulo LIKE ? OR descripcion LIKE ? OR ubicacion_nombre LIKE ?)`).join(' OR ');
+            whereClauses.push(`(${textConditions})`);
+            params.push(...terminos.flatMap(t => [`%${t}%`, `%${t}%`, `%${t}%`]));
+        }
+
+        if (fecha_inicio) {
+            whereClauses.push('fecha >= ?');
+            params.push(fecha_inicio);
+        }
+        if (fecha_fin) {
+            whereClauses.push('fecha <= ?');
+            params.push(fecha_fin);
+        }
+        if (categoria && categoria !== 'all') {
+            whereClauses.push('categoria = ?');
+            params.push(categoria);
+        }
+
+        if (lat && lng) {
+            selectDistancia = `, (6371 * acos(
+                cos(radians(?)) * cos(radians(latitud)) *
+                cos(radians(longitud) - radians(?)) +
+                sin(radians(?)) * sin(radians(latitud))
+            )) AS distancia`;
+            params.unshift(lat, lng, lat);
+        }
+
+        let sql = `
+            SELECT id_evento, titulo, fecha, descripcion, cupo_maximo, url_foto, 
+                   latitud, longitud, ubicacion_nombre, categoria, fecha_creacion
+                   ${selectDistancia},
+                   (SELECT COUNT(*) FROM evento_asistentes WHERE id_evento = e.id_evento) as asistentes_registrados,
+                   (SELECT COUNT(*) FROM evento_asistentes WHERE id_evento = e.id_evento AND matricula = ?) as usuario_registrado
+            FROM evento e
+            WHERE ${whereClauses.join(' AND ')}
+        `;
+        
+        // Ajuste seguro de parámetros
+        const paramsFinales = [];
+        if (lat && lng) paramsFinales.push(lat, lng, lat); // 3 params de geo
+        paramsFinales.push(usuarioMat || 0); // 1 param para usuario_registrado
+        
+        // Params del WHERE (quitamos los de geo que params ya tiene si los hubo)
+        const whereParamsOnly = params.slice(lat && lng ? 3 : 0);
+        paramsFinales.push(...whereParamsOnly);
+
+        let having = '';
+        if (lat && lng && radioKm) {
+            having = ` HAVING distancia <= ?`;
+            paramsFinales.push(Number(radioKm));
+        }
+
+        sql += having + ' ORDER BY fecha DESC LIMIT 50';
+
+        const [eventos] = await pool.promise().query(sql, paramsFinales);
+
+        const resultado = eventos.map(ev => ({
+            id: ev.id_evento,
+            titulo: ev.titulo,
+            descripcion: ev.descripcion,
+            fecha: ev.fecha,
+            hace_cuanto: tiempoTranscurrido(ev.fecha_creacion), // También útil aquí
+            categoria: ev.categoria,
+            ubicacion: {
+                nombre: ev.ubicacion_nombre,
+                lat: ev.latitud,
+                lng: ev.longitud
+            },
+            imagen: ev.url_foto,
+            cupo: {
+                maximo: ev.cupo_maximo,
+                registrados: ev.asistentes_registrados
+            },
+            inscrito: ev.usuario_registrado > 0,
+            distancia: ev.distancia ? Number(ev.distancia).toFixed(1) + ' km' : null
+        }));
+
+        res.json({ eventos: resultado });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error al buscar eventos', error });
     }
-
-    const whereParts = [];
-    if (palabra && palabra.trim()) {
-        const palabras = palabra.trim().split(/\s+/);
-        const likeClause = palabras.map(() => `(titulo LIKE ? OR descripcion LIKE ?)`).join(' OR ');
-        whereParts.push(`(${likeClause})`);
-        params.push(...palabras.flatMap(p => [`%${p}%`, `%${p}%`]));
-    }
-    if (fecha_inicio) {
-        whereParts.push('fecha >= ?');
-        params.push(fecha_inicio);
-    }
-    if (fecha_fin) {
-        whereParts.push('fecha <= ?');
-        params.push(fecha_fin);
-    }
-
-    const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
-    let sql = `SELECT id_evento, titulo, fecha, descripcion, cupo_maximo, url_foto, latitud, longitud, fecha_creacion${distanciaSelect}
-               FROM evento
-               ${whereSql}
-               ORDER BY fecha DESC
-               LIMIT 200`;
-    if (lat && lng && radioKm) {
-        sql += ` HAVING distancia <= ?`;
-        params.push(Number(radioKm));
-    }
-
-    pool.query(sql, params, (err, eventos) => {
-        if (err) return res.status(500).json({ mensaje: 'Error al buscar eventos', error: err });
-        if (!eventos || eventos.length === 0) return res.status(200).json({ eventos: [] });
-
-        const ids = eventos.map(e => e.id_evento);
-
-        const sqlAsist = `SELECT id_evento, COUNT(*) AS total FROM evento_asistentes WHERE id_evento IN (?) GROUP BY id_evento`;
-        const sqlOrg = `SELECT eo.id_evento, u.matricula, u.nombre, u.apellido FROM evento_organizadores eo JOIN usuario u ON eo.matricula = u.matricula WHERE eo.id_evento IN (?)`;
-
-        pool.query(sqlAsist, [ids], (errA, asistCounts) => {
-            if (errA) return res.status(500).json({ mensaje: 'Error al obtener asistentes', error: errA });
-
-            pool.query(sqlOrg, [ids], (errO, orgRows) => {
-                if (errO) return res.status(500).json({ mensaje: 'Error al obtener organizadores', error: errO });
-
-                // Si hay usuario, checar inscritos
-                if (usuarioMat) {
-                    const sqlReg = `SELECT id_evento FROM evento_asistentes WHERE id_evento IN (?) AND matricula = ?`;
-                    pool.query(sqlReg, [ids, usuarioMat], (errR, regs) => {
-                        if (errR) return res.status(500).json({ mensaje: 'Error al verificar inscripción', error: errR });
-                        const regSet = new Set((regs || []).map(r => r.id_evento));
-                        const asistMap = new Map((asistCounts || []).map(a => [a.id_evento, a.total]));
-                        const orgMap = orgRows.reduce((m, r) => {
-                            (m[r.id_evento] = m[r.id_evento] || []).push({ matricula: r.matricula, nombre: r.nombre, apellido: r.apellido });
-                            return m;
-                        }, {});
-                        const resultado = eventos.map(ev => ({
-                            id_evento: ev.id_evento,
-                            titulo: ev.titulo,
-                            descripcion: ev.descripcion,
-                            fecha: ev.fecha,
-                            cupo_maximo: ev.cupo_maximo,
-                            url_foto: ev.url_foto,
-                            latitud: ev.latitud,
-                            longitud: ev.longitud,
-                            fecha_creacion: ev.fecha_creacion,
-                            asistentes_count: Number(asistMap.get(ev.id_evento) || 0),
-                            organizadores: orgMap[ev.id_evento] || [],
-                            inscrito: regSet.has(ev.id_evento),
-                            distancia: ev.distancia !== undefined ? Number(ev.distancia).toFixed(2) : undefined
-                        }));
-                        return res.status(200).json({ eventos: resultado });
-                    });
-                } else {
-                    const asistMap = new Map((asistCounts || []).map(a => [a.id_evento, a.total]));
-                    const orgMap = orgRows.reduce((m, r) => {
-                        (m[r.id_evento] = m[r.id_evento] || []).push({ matricula: r.matricula, nombre: r.nombre, apellido: r.apellido });
-                        return m;
-                    }, {});
-                    const resultado = eventos.map(ev => ({
-                        id_evento: ev.id_evento,
-                        titulo: ev.titulo,
-                        descripcion: ev.descripcion,
-                        fecha: ev.fecha,
-                        cupo_maximo: ev.cupo_maximo,
-                        url_foto: ev.url_foto,
-                        latitud: ev.latitud,
-                        longitud: ev.longitud,
-                        fecha_creacion: ev.fecha_creacion,
-                        asistentes_count: Number(asistMap.get(ev.id_evento) || 0),
-                        organizadores: orgMap[ev.id_evento] || [],
-                        inscrito: false,
-                        distancia: ev.distancia !== undefined ? Number(ev.distancia).toFixed(2) : undefined
-                    }));
-                    return res.status(200).json({ eventos: resultado });
-                }
-            });
-        });
-    });
 }
-
-module.exports = {
-    busquedaGeneral,
-    busquedaEventos
-};

@@ -26,5 +26,15 @@ router.post('/ver-info-publicaciones', autenticar, usuariosControlador.obtenerUs
 router.get('/:matricula/eventos', autenticar, usuariosControlador.obtenerUsuarioConEventos);
 // Obtener eventos del usuario autenticado
 router.get('/eventos', autenticar, usuariosControlador.obtenerUsuarioConEventos);
+// Aprobar asesor
+router.put('/:matricula/aprobar', autenticar, usuariosControlador.aprobarAsesor);
+// Seguir/Dejar de seguir usuario
+router.post('/conectar', autenticar, usuariosControlador.alternarConexion);
+// Obtener sugerencias de usuarios
+router.get('/sugerencias', autenticar, usuariosControlador.obtenerSugerencias);
+// Obtener catalogo de intereses
+router.get('/intereses/catalogo', autenticar, usuariosControlador.obtenerCatalogoIntereses);
+// Actualizar intereses
+router.post('/intereses/actualizar', autenticar, usuariosControlador.actualizarMisIntereses);
 
 module.exports = router;

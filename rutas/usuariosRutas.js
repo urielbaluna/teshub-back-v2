@@ -37,4 +37,6 @@ router.get('/intereses/catalogo', autenticar, usuariosControlador.obtenerCatalog
 // Actualizar intereses
 router.post('/intereses/actualizar', autenticar, usuariosControlador.actualizarMisIntereses);
 
+router.get('/conexiones', autenticar, usuariosControlador.obtenerMisConexiones);
+
 module.exports = router;

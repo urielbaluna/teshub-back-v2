@@ -17,7 +17,7 @@ router.get('/listar', autenticar, publicacionesControlador.listarPublicaciones);
 router.post('/calificar', autenticar, publicacionesControlador.calificarPublicacion);
 router.post('/comentar', autenticar, publicacionesControlador.comentarPublicacion);
 router.post('/eliminar-comentario', autenticar, publicacionesControlador.eliminarComentario);
-// Se llaman cada vez que alguien abre el PDF o entra al detalle
+router.post('/eliminar-archivo', autenticar, publicacionesControlador.eliminarArchivoAdjunto);
 router.post('/:id_publi/vista', autenticar, publicacionesControlador.incrementarVistas);
 router.post('/:id_publi/descarga', autenticar, publicacionesControlador.incrementarDescargas);
 

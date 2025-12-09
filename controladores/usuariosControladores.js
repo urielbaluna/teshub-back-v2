@@ -614,6 +614,17 @@ exports.obtenerUsuarioConPublicaciones = (req, res) => {
             // 3. Red
             pool.query(`SELECT (SELECT COUNT(*) FROM conexiones WHERE seguido_matricula = ?) as seguidores, (SELECT COUNT(*) FROM conexiones WHERE seguidor_matricula = ?) as seguidos`, [matricula, matricula], (err3, red) => {
                 
+                const miMatricula = req.usuario.matricula; // Quien hace la petición
+
+                const sqlRed = `
+                    SELECT 
+                        (SELECT COUNT(*) FROM conexiones WHERE seguido_matricula = ?) as seguidores, 
+                        (SELECT COUNT(*) FROM conexiones WHERE seguidor_matricula = ?) as seguidos,
+                        (SELECT COUNT(*) FROM conexiones WHERE seguidor_matricula = ? AND seguido_matricula = ?) as es_seguidor
+                `;
+
+                pool.query(sqlRed, [matricula, matricula, miMatricula, matricula], (err3, red) => {
+                    if (err3) return res.status(500).json({ mensaje: 'Error red', err: err3 });
                 // 4. Publicaciones
                 const sqlPubs = `
                     SELECT p.id_publi, p.nombre AS proyecto_nombre, p.descripcion, p.fecha, p.imagen_portada, p.estado
@@ -652,14 +663,17 @@ exports.obtenerUsuarioConPublicaciones = (req, res) => {
                         ubicacion: u.ubicacion || '',
                         intereses: intereses || [],
                         estadisticas: {
-                            seguidores: red[0].seguidores,
-                            seguidos: red[0].seguidos,
-                            total_publicaciones: pubs.length
-                        },
-                        publicaciones: pubsFormat
-                    });
+                        seguidores: red[0].seguidores,
+                        seguidos: red[0].seguidos,
+                        total_publicaciones: pubs.length,
+                        siguiendo: red[0].es_seguidor > 0 
+                    },
+                    publicaciones: pubsFormat
+                });
                     console.log(pubsFormat);
                     
+                });
+
                 });
             });
         });
@@ -822,7 +836,7 @@ exports.obtenerSugerencias = async (req, res) => {
     const miMatricula = req.usuario.matricula;
 
     const sql = `
-        SELECT DISTINCT u.matricula, u.nombre, u.apellido, u.carrera, u.imagen, 
+        SELECT DISTINCT u.matricula, u.nombre, u.apellido, u.carrera, u.imagen, u.correo, u.rol,
                (SELECT COUNT(*) FROM usuario_intereses ui2 
                 WHERE ui2.matricula = u.matricula 
                 AND ui2.id_interes IN (SELECT id_interes FROM usuario_intereses WHERE matricula = ?)
@@ -837,9 +851,37 @@ exports.obtenerSugerencias = async (req, res) => {
         LIMIT 10
     `;
 
-    pool.query(sql, [miMatricula, miMatricula, miMatricula, miMatricula], (err, results) => {
+    pool.query(sql, [miMatricula, miMatricula, miMatricula, miMatricula], async (err, results) => {
         if (err) return res.status(500).json({ mensaje: 'Error al obtener sugerencias', err });
-        res.json(results);
+        
+        // Formatear el Rol también aquí
+        const resultadosFormateados = await Promise.all(results.map(async (u) => {
+             // Recuperar intereses para mostrarlos en los chips
+             const [intereses] = await pool.promise().query(
+                `SELECT i.id_interes, i.nombre 
+                 FROM usuario_intereses ui 
+                 JOIN intereses i ON ui.id_interes = i.id_interes 
+                 WHERE ui.matricula = ?`,
+                [u.matricula]
+            );
+
+            let rolNombre = '';
+            switch (u.rol) {
+                case 1: rolNombre = 'Administrador'; break;
+                case 2: rolNombre = 'Asesor'; break;
+                case 3: rolNombre = 'Estudiante'; break;
+            }
+            return {
+                ...u,
+                rol: rolNombre,
+                intereses: intereses,
+                siguiendo: false,
+                total_publicaciones: 0,
+                publicacion_destacada: null
+            };
+        }));
+
+        res.json(resultadosFormateados);
     });
 };
 
@@ -898,4 +940,52 @@ exports.actualizarMisIntereses = async (req, res) => {
             });
         });
     });
+};
+
+exports.obtenerMisConexiones = async (req, res) => {
+    const miMatricula = req.usuario.matricula;
+
+    try {
+        // 1. Obtener usuarios que YO sigo (tabla conexiones)
+        const sql = `
+            SELECT u.matricula, u.nombre, u.apellido, u.imagen, u.carrera, u.rol, u.semestre, u.correo
+            FROM usuario u
+            JOIN conexiones c ON u.matricula = c.seguido_matricula
+            WHERE c.seguidor_matricula = ? AND u.estado = 1
+        `;
+
+        const [usuarios] = await pool.promise().query(sql, [miMatricula]);
+
+        const usuariosCompletos = await Promise.all(usuarios.map(async (u) => {
+            const [intereses] = await pool.promise().query(
+                `SELECT i.id_interes, i.nombre 
+                 FROM usuario_intereses ui 
+                 JOIN intereses i ON ui.id_interes = i.id_interes 
+                 WHERE ui.matricula = ?`,
+                [u.matricula]
+            );
+
+            let rolNombre = '';
+            switch (u.rol) {
+                case 1: rolNombre = 'Administrador'; break;
+                case 2: rolNombre = 'Asesor'; break;
+                case 3: rolNombre = 'Estudiante'; break;
+            }
+
+            return {
+                ...u,
+                rol: rolNombre,
+                intereses: intereses, // Enviamos objetos {id_interes, nombre}
+                siguiendo: true,
+                total_publicaciones: 0,
+                publicacion_destacada: null
+            };
+        }));
+
+        res.json(usuariosCompletos);
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error al obtener conexiones', error });
+    }
 };

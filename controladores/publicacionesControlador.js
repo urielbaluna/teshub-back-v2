@@ -1,5 +1,6 @@
 'use strict';
 
+const { log } = require('console');
 const pool = require('../config/db');
 const fs = require('fs');
 const path = require('path');
@@ -170,17 +171,19 @@ exports.listarPublicaciones = async (req, res) => {
 
 exports.verPublicacion = async (req, res) => {
     const { id_publi } = req.params;
+    const matriculaSolicitante = req.usuario.matricula;
 
     try {
         // Obtener datos principales
         const sql = `
             SELECT p.*, 
                    (SELECT AVG(evaluacion) FROM evaluacion WHERE id_publi = p.id_publi) as promedio_calificacion,
-                   (SELECT COUNT(*) FROM evaluacion WHERE id_publi = p.id_publi) as total_calificaciones
+                   (SELECT COUNT(*) FROM evaluacion WHERE id_publi = p.id_publi) as total_calificaciones,
+                   (SELECT evaluacion FROM evaluacion WHERE id_publi = p.id_publi AND matricula = ?) as mi_calificacion
             FROM publicacion p
             WHERE p.id_publi = ?
         `;
-        const [rows] = await pool.promise().query(sql, [id_publi]);
+        const [rows] = await pool.promise().query(sql, [matriculaSolicitante, id_publi]);
 
         if (rows.length === 0) return res.status(404).json({ mensaje: 'Publicación no encontrada' });
         const publi = rows[0];
@@ -193,7 +196,7 @@ exports.verPublicacion = async (req, res) => {
              WHERE i.id_publi = ?`, [id_publi]);
         
         const [comentarios] = await pool.promise().query(
-            `SELECT c.comentario, u.nombre, u.imagen 
+            `SELECT c.comentario, u.matricula, u.nombre, u.imagen, c.fecha
              FROM comentario c JOIN usuario u ON c.matricula = u.matricula 
              WHERE c.id_publi = ?`, [id_publi]);
 
@@ -202,6 +205,9 @@ exports.verPublicacion = async (req, res) => {
              JOIN publicacion_etiquetas pe ON e.id_etiqueta = pe.id_etiqueta 
              WHERE pe.id_publi = ?`, [id_publi]);
 
+        console.log(comentarios);
+        
+
         res.json({
             publicacion: {
                 ...publi,
@@ -209,11 +215,14 @@ exports.verPublicacion = async (req, res) => {
                 integrantes,
                 comentarios,
                 tags: tags.map(t => t.nombre),
-                calificacion_promedio: publi.promedio_calificacion ? Number(publi.promedio_calificacion).toFixed(1) : "0.0"
+                calificacion_promedio: publi.promedio_calificacion ? Number(publi.promedio_calificacion).toFixed(1) : "0.0",
+                mi_calificacion: publi.mi_calificacion || null
             }
         });
 
     } catch (error) {
+        console.log(error);
+        
         res.status(500).json({ mensaje: 'Error del servidor', error });
     }
 }
@@ -307,8 +316,14 @@ exports.actualizarPublicacion = async (req, res) => {
             }
         }
         
-        // Nota: La lógica para eliminar/reemplazar archivos adjuntos (PDFs) no está incluida aquí. 
-        // Si quieres modificar PDFs, necesitas endpoints separados o extender este controlador.
+        const nuevosArchivos = req.files && req.files['archivos'] 
+            ? req.files['archivos'].map(f => 'uploads/publicaciones/' + f.filename) 
+            : [];
+
+        if (nuevosArchivos.length > 0) {
+            const valoresArchivos = nuevosArchivos.map(ruta => [id_publi, ruta]);
+            await pool.promise().query('INSERT INTO archivos (id_publi, ruta) VALUES ?', [valoresArchivos]);
+        }
 
         res.json({ mensaje: updateMessage });
 
@@ -441,3 +456,33 @@ exports.eliminarComentario = async (req, res) => {
         res.status(500).json({ mensaje: 'Error al eliminar comentario', error });
     }
 }
+
+exports.eliminarArchivoAdjunto = async (req, res) => {
+    const matriculaSolicitante = req.usuario.matricula;
+    const { id_publi, ruta } = req.body; // Recibimos ID y la ruta del archivo (ej: uploads/publicaciones/foto.jpg)
+
+    try {
+        // 1. Verificar permiso (que sea integrante de la publicación)
+        const [integrantes] = await pool.promise().query('SELECT matricula FROM integrantes WHERE id_publi = ?', [id_publi]);
+        const esIntegrante = integrantes.some(i => i.matricula == matriculaSolicitante);
+        
+        if (!esIntegrante && req.usuario.rol !== 1) {
+            return res.status(403).json({ mensaje: 'No tienes permiso para eliminar archivos de esta publicación.' });
+        }
+
+        // 2. Borrar archivo físico
+        const rutaFisica = path.join(__dirname, '..', ruta);
+        if (fs.existsSync(rutaFisica)) {
+            fs.unlinkSync(rutaFisica);
+        }
+
+        // 3. Borrar de la BD
+        await pool.promise().query('DELETE FROM archivos WHERE id_publi = ? AND ruta = ?', [id_publi, ruta]);
+
+        res.json({ mensaje: 'Archivo eliminado correctamente' });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error al eliminar archivo', error });
+    }
+};

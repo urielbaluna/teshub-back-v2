@@ -92,10 +92,11 @@ exports.obtenerMiAsesor = async (req, res) => {
     const matriculaEstudiante = req.usuario.matricula;
 
     try {
-        // 1. Asegúrate de incluir 'u.rol' en el SELECT
+        // 1. Obtener datos básicos del asesor
         const sql = `
             SELECT a.id_asesoria, a.fecha_solicitud, a.estado,
-                   u.matricula, u.nombre, u.apellido, u.imagen, u.correo, u.rol
+                   u.matricula, u.nombre, u.apellido, u.imagen, u.correo, u.rol,
+                   u.carrera, u.semestre, u.biografia, u.ubicacion
             FROM asesorias a
             JOIN usuario u ON a.matricula_asesor = u.matricula
             WHERE a.matricula_estudiante = ? AND a.estado IN (0, 1)
@@ -110,17 +111,35 @@ exports.obtenerMiAsesor = async (req, res) => {
 
         const asesorData = rows[0];
         
-        // 2. IMPORTANTE: Convertir el número (2) a texto ("Asesor")
-        // Android espera un String, si mandas un número o null, trona.
-        let rolTexto = 'Asesor'; // Por defecto
+        // 2. OBTENER INTERESES DEL ASESOR (Esto faltaba y causaba el crash)
+        const [intereses] = await pool.promise().query(
+            `SELECT i.id_interes, i.nombre 
+             FROM usuario_intereses ui 
+             JOIN intereses i ON ui.id_interes = i.id_interes 
+             WHERE ui.matricula = ?`,
+            [asesorData.matricula]
+        );
+        asesorData.intereses = intereses; // <--- Agregamos la lista
+
+        // 3. OBTENER ESTADÍSTICAS DEL ASESOR (Para prevenir futuros errores)
+        const [stats] = await pool.promise().query(`
+            SELECT 
+                (SELECT COUNT(*) FROM conexiones WHERE seguido_matricula = ?) as seguidores,
+                (SELECT COUNT(*) FROM conexiones WHERE seguidor_matricula = ?) as seguidos
+        `, [asesorData.matricula, asesorData.matricula]);
+        asesorData.estadisticas = stats[0];
+
+        // 4. Formatear Rol
+        let rolTexto = 'Asesor';
         if(asesorData.rol === 1) rolTexto = 'Administrador';
         if(asesorData.rol === 3) rolTexto = 'Estudiante';
-        
         asesorData.rol = rolTexto; 
 
-        // Rellenar campos opcionales para que Android no falle si usa PerfilResponse
-        asesorData.total_publicaciones = 0;
+        // 5. Rellenar campos extra
+        asesorData.total_publicaciones = 0; // Podrías hacer un count real si quisieras
         asesorData.publicacion_destacada = null;
+        // Asesores siempre están activos si aparecen aquí, pero por consistencia:
+        asesorData.estado = 1; 
 
         res.json({ 
             asesor: asesorData,
@@ -129,7 +148,7 @@ exports.obtenerMiAsesor = async (req, res) => {
 
     } catch (error) {
         console.error(error);
-        res.status(500).json({ mensaje: 'Error', error });
+        res.status(500).json({ mensaje: 'Error al obtener asesor', error });
     }
 };
 

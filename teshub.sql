@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Servidor: 127.0.0.1
--- Tiempo de generación: 07-12-2025 a las 04:26:35
+-- Tiempo de generación: 11-12-2025 a las 06:16:54
 -- Versión del servidor: 10.4.32-MariaDB
 -- Versión de PHP: 8.2.12
 
@@ -37,7 +37,9 @@ CREATE TABLE `archivos` (
 --
 
 INSERT INTO `archivos` (`ruta`, `id_publi`) VALUES
-('uploads/publicaciones/1765044307754-458418994-archivos.jpeg', 10);
+('uploads/publicaciones/1765257974063-948629361-archivos.jpeg', 10),
+('uploads/publicaciones/1765306256548-17776322-archivos.jpeg', 9),
+('uploads/publicaciones/1765401543278-963639790-archivos.pdf', 11);
 
 -- --------------------------------------------------------
 
@@ -58,7 +60,8 @@ CREATE TABLE `asesorias` (
 --
 
 INSERT INTO `asesorias` (`id_asesoria`, `matricula_asesor`, `matricula_estudiante`, `estado`, `fecha_solicitud`) VALUES
-(1, 1234, 202124003, 1, '2025-12-06 02:03:59');
+(1, 1234, 202124003, 1, '2025-12-06 02:03:59'),
+(2, 1234, 202124300, 1, '2025-12-09 12:52:25');
 
 -- --------------------------------------------------------
 
@@ -98,6 +101,14 @@ CREATE TABLE `codigos_verificacion` (
   `usado` tinyint(1) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+--
+-- Volcado de datos para la tabla `codigos_verificacion`
+--
+
+INSERT INTO `codigos_verificacion` (`id`, `correo`, `codigo`, `fecha_expiracion`, `usado`) VALUES
+(1, 'barreralunauriel@gmail.com', '621334', '2025-12-09 12:56:33', 1),
+(2, 'barreralunauriel@gmail.com', '295571', '2025-12-10 23:41:37', 1);
+
 -- --------------------------------------------------------
 
 --
@@ -107,8 +118,18 @@ CREATE TABLE `codigos_verificacion` (
 CREATE TABLE `comentario` (
   `comentario` varchar(300) DEFAULT NULL,
   `matricula` int(11) DEFAULT NULL,
-  `id_publi` int(11) DEFAULT NULL
+  `id_publi` int(11) DEFAULT NULL,
+  `fecha` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `comentario`
+--
+
+INSERT INTO `comentario` (`comentario`, `matricula`, `id_publi`, `fecha`) VALUES
+('holA', 202124003, 8, '2025-12-09 00:21:19'),
+('Holaaaaaaaaaaaaaa2', 202124003, 8, '2025-12-09 00:22:10'),
+('Comentario', 202124003, 9, '2025-12-09 12:50:42');
 
 -- --------------------------------------------------------
 
@@ -121,6 +142,15 @@ CREATE TABLE `conexiones` (
   `seguido_matricula` int(11) NOT NULL,
   `fecha_conexion` datetime DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `conexiones`
+--
+
+INSERT INTO `conexiones` (`seguidor_matricula`, `seguido_matricula`, `fecha_conexion`) VALUES
+(1234, 202124003, '2025-12-09 01:31:52'),
+(202124003, 1234, '2025-12-10 15:13:10'),
+(202124003, 202124300, '2025-12-09 12:50:16');
 
 -- --------------------------------------------------------
 
@@ -140,7 +170,8 @@ CREATE TABLE `etiquetas` (
 INSERT INTO `etiquetas` (`id_etiqueta`, `nombre`) VALUES
 (2, 'AI'),
 (3, 'CHAT'),
-(1, 'IA');
+(1, 'IA'),
+(4, 'React');
 
 -- --------------------------------------------------------
 
@@ -153,6 +184,13 @@ CREATE TABLE `evaluacion` (
   `id_publi` int(11) NOT NULL,
   `evaluacion` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `evaluacion`
+--
+
+INSERT INTO `evaluacion` (`matricula`, `id_publi`, `evaluacion`) VALUES
+(202124003, 8, 5);
 
 -- --------------------------------------------------------
 
@@ -179,7 +217,7 @@ CREATE TABLE `evento` (
 --
 
 INSERT INTO `evento` (`id_evento`, `titulo`, `categoria`, `fecha`, `descripcion`, `cupo_maximo`, `url_foto`, `ubicacion_nombre`, `latitud`, `longitud`, `fecha_creacion`) VALUES
-(3, 'event', 'Cultural', '2025-12-06 07:58:00', 'Desc', 10, 'uploads/eventos/1765007980510-evento_cover_1765007979529.jpg', 'TESCHA', 19.23346563, -98.84132098, '2025-12-06 07:59:40'),
+(3, 'event', 'Cultural', '2025-12-07 01:58:00', 'Descripcion', 10, 'uploads/eventos/1765007980510-evento_cover_1765007979529.jpg', 'TESCHA', 19.23514847, -98.84057935, '2025-12-06 07:59:40'),
 (4, 'event', 'Otro', '2025-12-06 08:22:00', 'desssssssc', 2, 'uploads/eventos/1765009439745-evento_cover_1765009438716.jpg', 'Ay', 19.23504970, -98.84167906, '2025-12-06 08:23:59');
 
 -- --------------------------------------------------------
@@ -199,7 +237,8 @@ CREATE TABLE `evento_asistentes` (
 --
 
 INSERT INTO `evento_asistentes` (`id_evento`, `matricula`, `fecha_registro`) VALUES
-(3, 1234, '2025-12-06 12:05:48');
+(3, 1234, '2025-12-10 15:10:15'),
+(4, 1234, '2025-12-09 12:51:46');
 
 -- --------------------------------------------------------
 
@@ -258,7 +297,9 @@ INSERT INTO `integrantes` (`matricula`, `id_publi`) VALUES
 ('1234', 8),
 ('1234', 9),
 ('202124003', 9),
-('202124003', 10);
+('202124003', 10),
+('202124003', 11),
+('202124300', 11);
 
 -- --------------------------------------------------------
 
@@ -270,6 +311,15 @@ CREATE TABLE `intereses` (
   `id_interes` int(11) NOT NULL,
   `nombre` varchar(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `intereses`
+--
+
+INSERT INTO `intereses` (`id_interes`, `nombre`) VALUES
+(3, 'Desarrollo Android'),
+(2, 'Desarrollo web'),
+(1, 'IA');
 
 -- --------------------------------------------------------
 
@@ -283,7 +333,7 @@ CREATE TABLE `publicacion` (
   `descripcion` varchar(500) DEFAULT NULL,
   `imagen_portada` varchar(255) DEFAULT NULL COMMENT 'Ruta de la imagen thumbnail',
   `fecha` date DEFAULT NULL,
-  `estado` enum('pendiente','aprobado','rechazado') DEFAULT 'pendiente',
+  `estado` enum('pendiente','aprobado','rechazado','correcciones') NOT NULL DEFAULT 'pendiente',
   `vistas` int(11) DEFAULT 0,
   `descargas` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -293,9 +343,10 @@ CREATE TABLE `publicacion` (
 --
 
 INSERT INTO `publicacion` (`id_publi`, `nombre`, `descripcion`, `imagen_portada`, `fecha`, `estado`, `vistas`, `descargas`) VALUES
-(8, 'tiiituloo', 'desc', 'uploads/publicaciones/1765040847042-portada', '2025-12-06', 'aprobado', 0, 0),
-(9, 'pro', 'IA', 'uploads/publicaciones/1765041072754-452328126-portada', '2025-12-06', 'aprobado', 0, 0),
-(10, 'tusds', 'desc', 'uploads/publicaciones/1765044307753-231559259-portada', '2025-12-06', 'aprobado', 0, 0);
+(8, 'tiiituloo', 'desc', 'uploads/publicaciones/1765040847042-portada', '2025-12-06', 'aprobado', 30, 0),
+(9, 'pro', 'IA', 'uploads/publicaciones/1765041072754-452328126-portada', '2025-12-06', 'aprobado', 10, 0),
+(10, 'tusds', 'desc', 'uploads/publicaciones/1765044307753-231559259-portada', '2025-12-06', 'aprobado', 5, 1),
+(11, 'Cahngo', 'Descripcion 1', 'uploads/publicaciones/1765401543270-212459096-portada', '2025-12-10', 'aprobado', 18, 1);
 
 -- --------------------------------------------------------
 
@@ -315,7 +366,8 @@ CREATE TABLE `publicacion_etiquetas` (
 INSERT INTO `publicacion_etiquetas` (`id_publi`, `id_etiqueta`) VALUES
 (8, 1),
 (9, 1),
-(10, 3);
+(10, 3),
+(11, 4);
 
 -- --------------------------------------------------------
 
@@ -337,7 +389,18 @@ CREATE TABLE `revisiones_publicacion` (
 --
 
 INSERT INTO `revisiones_publicacion` (`id_revision`, `id_publi`, `matricula_asesor`, `estado_asignado`, `comentarios`, `fecha_revision`) VALUES
-(2, 10, 1234, 'aprobado', 'okeeey', '2025-12-06 12:11:56');
+(2, 10, 1234, 'aprobado', 'okeeey', '2025-12-06 12:11:56'),
+(3, 11, 1234, 'correcciones', 'No ta chido', '2025-12-10 15:20:46'),
+(4, 11, 1234, 'correcciones', 'sigue estando mal', '2025-12-10 21:54:04'),
+(5, 11, 1234, 'correcciones', 'Sigue estando mal', '2025-12-10 21:59:11'),
+(6, 11, 1234, 'correcciones', 'corregir', '2025-12-10 22:07:25'),
+(7, 11, 1234, 'correcciones', 'otra vez', '2025-12-10 22:13:54'),
+(8, 11, 1234, 'correcciones', 'yaaa?', '2025-12-10 22:14:53'),
+(9, 11, 1234, 'correcciones', 'Yaaaa?', '2025-12-10 22:15:34'),
+(10, 11, 1234, 'correcciones', ':)', '2025-12-10 22:19:21'),
+(11, 11, 1234, 'correcciones', ':/', '2025-12-10 22:20:52'),
+(12, 11, 1234, 'correcciones', 'sigue mal', '2025-12-10 22:27:58'),
+(13, 11, 1234, 'aprobado', 'muy bien', '2025-12-10 22:28:22');
 
 -- --------------------------------------------------------
 
@@ -366,7 +429,8 @@ CREATE TABLE `usuario` (
 
 INSERT INTO `usuario` (`matricula`, `nombre`, `apellido`, `contrasena`, `correo`, `rol`, `carrera`, `semestre`, `biografia`, `ubicacion`, `imagen`, `estado`) VALUES
 (1234, 'Horacio', 'Azamar', '$2b$10$4Bxtzs3Ov.X4CkzF8nPt3.w8TA/Iecp9Bpl9dWFjDSYMvhAkRekP.', 'urielbl48@gmail.com', 2, NULL, NULL, NULL, NULL, 'uploads/imagenes/1765008469308-temp_profile_1765008468280.jpg', 1),
-(202124003, 'Uriel', 'Barrera', '$2b$10$hiBkvOr6PB6VnLVigGplx.VsvswhAl7iMJYEwNrMfQhn6je3HMjEu', 'barreralunauriel@gmail.com', 3, 'ISC', '9no', NULL, NULL, 'uploads/imagenes/1765008527242-temp_profile_1765008526266.jpg', 1);
+(202124003, 'Uriel', 'Barrera', '$2b$10$ACa5e6veV2wu34trkDYVkekz.zRGJoRTP5Dary86z8ptPwaFOWMoS', 'barreralunauriel@gmail.com', 3, 'ISC', '9no', NULL, NULL, 'uploads/imagenes/1765008527242-temp_profile_1765008526266.jpg', 1),
+(202124300, 'Uriel', 'Muerdeme la rama', '$2b$10$8X.I0UxKgTRCwe28.UmxLOxZiLXCpAdFyjoZRhrbs6oCjQA0SOP5S', 'urielbaluna@outlook.com', 3, NULL, NULL, NULL, NULL, NULL, 1);
 
 -- --------------------------------------------------------
 
@@ -378,6 +442,15 @@ CREATE TABLE `usuario_intereses` (
   `matricula` int(11) NOT NULL,
   `id_interes` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Volcado de datos para la tabla `usuario_intereses`
+--
+
+INSERT INTO `usuario_intereses` (`matricula`, `id_interes`) VALUES
+(1234, 1),
+(202124003, 3),
+(202124300, 3);
 
 --
 -- Índices para tablas volcadas
@@ -524,7 +597,7 @@ ALTER TABLE `usuario_intereses`
 -- AUTO_INCREMENT de la tabla `asesorias`
 --
 ALTER TABLE `asesorias`
-  MODIFY `id_asesoria` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id_asesoria` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `codigos_acceso`
@@ -536,13 +609,13 @@ ALTER TABLE `codigos_acceso`
 -- AUTO_INCREMENT de la tabla `codigos_verificacion`
 --
 ALTER TABLE `codigos_verificacion`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT de la tabla `etiquetas`
 --
 ALTER TABLE `etiquetas`
-  MODIFY `id_etiqueta` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id_etiqueta` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT de la tabla `evento`
@@ -554,19 +627,19 @@ ALTER TABLE `evento`
 -- AUTO_INCREMENT de la tabla `intereses`
 --
 ALTER TABLE `intereses`
-  MODIFY `id_interes` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id_interes` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- AUTO_INCREMENT de la tabla `publicacion`
 --
 ALTER TABLE `publicacion`
-  MODIFY `id_publi` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id_publi` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
 
 --
 -- AUTO_INCREMENT de la tabla `revisiones_publicacion`
 --
 ALTER TABLE `revisiones_publicacion`
-  MODIFY `id_revision` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id_revision` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- Restricciones para tablas volcadas

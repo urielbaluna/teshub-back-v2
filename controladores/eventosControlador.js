@@ -156,6 +156,7 @@ exports.listarEventos = async (req, res) => {
                 // Aquí inyectamos la lista (o vacía si no hay)
                 organizadores: orgsPorEvento[ev.id_evento] || [] 
             }));
+            console.log("listarEventos: ", respuesta);
 
             res.json({ eventos: respuesta });
         } else {

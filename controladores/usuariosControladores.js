@@ -352,57 +352,56 @@ exports.actualizarUsuario = async(req, res) => {
 exports.eliminarCuenta = async (req, res) => {
     const matriculaSolicitante = req.usuario.matricula;
     const rolSolicitante = req.usuario.rol; 
-    const { matricula } = req.body; 
+    // AHORA RECIBIMOS EL CÓDIGO
+    const { matricula, codigo } = req.body; 
 
-    // 1. Determinar a quién vamos a eliminar
-    let matriculaAEliminar;
-    if (rolSolicitante === 1) { // Admin
-        if (!matricula) {
-            return res.status(400).json({ mensaje: 'Debes especificar la matrícula a eliminar' });
-        }
-        matriculaAEliminar = matricula;
-    } else {
-        matriculaAEliminar = matriculaSolicitante;
+    // --- 1. VERIFICACIÓN DE CÓDIGO (NUEVO) ---
+    if (!codigo) {
+        return res.status(400).json({ mensaje: 'Se requiere el código de verificación para eliminar la cuenta.' });
     }
 
     try {
-        // 2. Verificar rol del usuario a eliminar antes de desactivarlo
-        const [users] = await pool.promise().query(
-            'SELECT rol FROM usuario WHERE matricula = ? AND estado = 1', 
-            [matriculaAEliminar]
+        // Verificar código en BD
+        const [u] = await pool.promise().query('SELECT correo FROM usuario WHERE matricula = ?', [matriculaSolicitante]);
+        const correoActual = u[0].correo;
+
+        const [rows] = await pool.promise().query(
+            `SELECT * FROM codigos_verificacion 
+             WHERE correo = ? AND codigo = ? AND usado = 0 AND fecha_expiracion > NOW()`,
+            [correoActual, codigo]
         );
 
-        if (users.length === 0) {
-            return res.status(404).json({ mensaje: 'Usuario no encontrado o ya desactivado' });
+        if (rows.length === 0) {
+            return res.status(400).json({ mensaje: 'El código es inválido o ha expirado.' });
         }
+
+        // Quemar código
+        await pool.promise().query('UPDATE codigos_verificacion SET usado = 1 WHERE id = ?', [rows[0].id]);
+
+        // --- 2. PROCESO DE ELIMINACIÓN (TU CÓDIGO EXISTENTE) ---
+        let matriculaAEliminar;
+        if (rolSolicitante === 1) { 
+            if (!matricula) return res.status(400).json({ mensaje: 'Debes especificar la matrícula' });
+            matriculaAEliminar = matricula;
+        } else {
+            matriculaAEliminar = matriculaSolicitante;
+        }
+
+        const [users] = await pool.promise().query('SELECT rol FROM usuario WHERE matricula = ? AND estado = 1', [matriculaAEliminar]);
+        if (users.length === 0) return res.status(404).json({ mensaje: 'Usuario no encontrado' });
 
         const rolAEliminar = users[0].rol;
 
-        // 3. Desactivar cuenta (Soft Delete)
-        await pool.promise().query(
-            'UPDATE usuario SET estado = 0 WHERE matricula = ?', 
-            [matriculaAEliminar]
-        );
+        await pool.promise().query('UPDATE usuario SET estado = 0 WHERE matricula = ?', [matriculaAEliminar]);
 
-        // 4. LÓGICA EXTRA: Si era Asesor, liberar a sus estudiantes
-        if (rolAEliminar === 2) { // 2 = Asesor
-            // Cambiamos el estado de la asesoría a 2 (Finalizada/Cancelada) o borramos el registro
-            // Asumiendo que en tu tabla 'asesorias', estado 1 es Activo.
-            await pool.promise().query(
-                'UPDATE asesorias SET estado = 2 WHERE matricula_asesor = ? AND estado = 1', 
-                [matriculaAEliminar]
-            );
+        if (rolAEliminar === 2) {
+            await pool.promise().query('UPDATE asesorias SET estado = 2 WHERE matricula_asesor = ? AND estado = 1', [matriculaAEliminar]);
         }
-        
-        // (Opcional) Si es Estudiante, cancelar sus solicitudes pendientes
         if (rolAEliminar === 3) {
-             await pool.promise().query(
-                'DELETE FROM asesorias WHERE matricula_estudiante = ? AND estado = 0', 
-                [matriculaAEliminar]
-            );
+             await pool.promise().query('DELETE FROM asesorias WHERE matricula_estudiante = ? AND estado = 0', [matriculaAEliminar]);
         }
 
-        res.json({ mensaje: 'Cuenta desactivada correctamente y relaciones actualizadas.' });
+        res.json({ mensaje: 'Cuenta eliminada correctamente.' });
 
     } catch (err) {
         console.error(err);
@@ -510,8 +509,8 @@ exports.obtenerUsuario = async (req, res) => {
 
     // 1. USUARIO: Consultamos datos personales + los NUEVOS campos (carrera, bio, etc.)
     const sqlUsuario = `
-        SELECT matricula, nombre, apellido, correo, rol, imagen, 
-               carrera, semestre, biografia, ubicacion 
+    SELECT matricula, nombre, apellido, correo, rol, imagen, 
+           carrera, semestre, biografia, ubicacion, estado 
         FROM usuario 
         WHERE matricula = ? AND estado = 1`;
 
@@ -627,7 +626,13 @@ exports.obtenerUsuarioConPublicaciones = (req, res) => {
                     if (err3) return res.status(500).json({ mensaje: 'Error red', err: err3 });
                 // 4. Publicaciones
                 const sqlPubs = `
-                    SELECT p.id_publi, p.nombre AS proyecto_nombre, p.descripcion, p.fecha, p.imagen_portada, p.estado
+                    SELECT p.id_publi, p.nombre AS proyecto_nombre, p.descripcion, p.fecha, p.imagen_portada, p.estado,
+                           p.vistas, p.descargas,
+                           (SELECT AVG(evaluacion) FROM evaluacion WHERE id_publi = p.id_publi) as rating,
+                           (SELECT GROUP_CONCAT(e.nombre SEPARATOR ', ') 
+                            FROM etiquetas e 
+                            JOIN publicacion_etiquetas pe ON e.id_etiqueta = pe.id_etiqueta 
+                            WHERE pe.id_publi = p.id_publi) as tags
                     FROM publicacion p
                     JOIN integrantes i ON p.id_publi = i.id_publi
                     WHERE i.matricula = ?
@@ -643,8 +648,11 @@ exports.obtenerUsuarioConPublicaciones = (req, res) => {
                         descripcion: p.descripcion,
                         imagen_portada: p.imagen_portada,
                         estado: p.estado,
-                        // AQUI SE LLAMA AL HELPER
-                        hace_cuanto: p.fecha ? tiempoTranscurrido(p.fecha) : 'Reciente' 
+                        hace_cuanto: p.fecha ? tiempoTranscurrido(p.fecha) : 'Reciente',
+                        vistas: p.vistas,
+                        descargas: p.descargas,
+                        rating: p.rating ? Number(p.rating).toFixed(1) : "0.0",
+                        tags: p.tags ? p.tags.split(', ') : []
                     }));
 
                     let rolNombre = u.rol === 1 ? 'Admin' : (u.rol === 2 ? 'Asesor' : 'Estudiante');
@@ -682,30 +690,27 @@ exports.obtenerUsuarioConPublicaciones = (req, res) => {
 
 exports.obtenerUsuarioConEventos = async (req, res) => {
     const matricula = req.body?.matricula || req.params?.matricula || req.usuario?.matricula;
-    const tipo = (req.query?.tipo || '').toLowerCase(); // 'organizador' | 'asistente' | '' (ambos)
+    const tipo = (req.query?.tipo || '').toLowerCase(); 
 
     if (!matricula) {
         return res.status(400).json({ mensaje: 'Matrícula no proporcionada' });
     }
 
-    // 1. Obtener datos básicos del usuario (Solo lo necesario para el header)
-    const sqlUsuario = 'SELECT matricula, nombre, apellido, imagen, rol, estado FROM usuario WHERE matricula = ? LIMIT 1';
-    
-    pool.query(sqlUsuario, [matricula], (errU, users) => {
-        if (errU) return res.status(500).json({ mensaje: 'Error de servidor', err: errU });
-        if (!users || users.length === 0) return res.status(404).json({ mensaje: 'Usuario no encontrado' });
-
+    try {
+        // 1. Obtener datos del usuario
+        const [users] = await pool.promise().query('SELECT matricula, nombre, apellido, imagen, rol, estado FROM usuario WHERE matricula = ? LIMIT 1', [matricula]);
+        
+        if (users.length === 0) return res.status(404).json({ mensaje: 'Usuario no encontrado' });
         const usuario = users[0];
 
-        // 2. Construir consulta de Eventos (AHORA CON CATEGORIA Y UBICACION_NOMBRE)
+        // 2. Construir consulta de Eventos
         let sqlEvents;
         let params;
-
-        // Seleccionamos los campos nuevos que agregamos a la BD
         const selectFields = `
             e.id_evento, e.titulo, e.descripcion, e.fecha, e.cupo_maximo, 
             e.url_foto, e.latitud, e.longitud, e.fecha_creacion,
-            e.categoria, e.ubicacion_nombre
+            e.categoria, e.ubicacion_nombre,
+            (SELECT COUNT(*) FROM evento_asistentes ea WHERE ea.id_evento = e.id_evento) AS asistentes_registrados
         `;
 
         if (tipo === 'organizador') {
@@ -714,8 +719,7 @@ exports.obtenerUsuarioConEventos = async (req, res) => {
                 FROM evento e
                 JOIN evento_organizadores eo ON e.id_evento = eo.id_evento
                 WHERE eo.matricula = ?
-                ORDER BY e.fecha DESC
-            `;
+                ORDER BY e.fecha DESC`;
             params = [matricula];
         } else if (tipo === 'asistente') {
             sqlEvents = `
@@ -723,11 +727,9 @@ exports.obtenerUsuarioConEventos = async (req, res) => {
                 FROM evento e
                 JOIN evento_asistentes ea ON e.id_evento = ea.id_evento
                 WHERE ea.matricula = ?
-                ORDER BY e.fecha DESC
-            `;
+                ORDER BY e.fecha DESC`;
             params = [matricula];
         } else {
-            // Ambos
             sqlEvents = `
                 SELECT ${selectFields},
                        IF(eo.matricula IS NULL, 0, 1) AS es_organizador,
@@ -736,51 +738,87 @@ exports.obtenerUsuarioConEventos = async (req, res) => {
                 LEFT JOIN evento_organizadores eo ON e.id_evento = eo.id_evento AND eo.matricula = ?
                 LEFT JOIN evento_asistentes ea ON e.id_evento = ea.id_evento AND ea.matricula = ?
                 WHERE eo.matricula IS NOT NULL OR ea.matricula IS NOT NULL
-                ORDER BY e.fecha DESC
-            `;
+                ORDER BY e.fecha DESC`;
             params = [matricula, matricula];
         }
 
-        pool.query(sqlEvents, params, (errE, eventos) => {
-            if (errE) return res.status(500).json({ mensaje: 'Error al obtener eventos', err: errE });
+        const [eventos] = await pool.promise().query(sqlEvents, params);
 
-            // Formatear respuesta
-            const listaEventos = (eventos || []).map(ev => ({
-                id_evento: ev.id_evento,
-                titulo: ev.titulo,
-                descripcion: ev.descripcion,
-                fecha: ev.fecha,
-                cupo_maximo: ev.cupo_maximo,
-                url_foto: ev.url_foto,
-                latitud: ev.latitud,
-                longitud: ev.longitud,
-                fecha_creacion: ev.fecha_creacion,
-                // Nuevos campos
-                categoria: ev.categoria || 'General',
-                ubicacion_nombre: ev.ubicacion_nombre || 'Ubicación por definir',
-                // Flags
-                es_organizador: Boolean(ev.es_organizador),
-                es_asistente: Boolean(ev.es_asistente)
-            }));
+        // --- 3. OBTENER ORGANIZADORES (ESTO ES LO QUE FALTABA) ---
+        const eventosIds = eventos.map(e => e.id_evento);
+        let orgsPorEvento = {};
 
-            let rolNombre = '';
-            switch (usuario.rol) {
-                case 1: rolNombre = 'Administrador'; break;
-                case 2: rolNombre = 'Asesor'; break;
-                case 3: rolNombre = 'Estudiante'; break;
-                default: rolNombre = 'Desconocido';
-            }
+        if (eventosIds.length > 0) {
+            const sqlOrgs = `
+                SELECT eo.id_evento, u.matricula, u.nombre, u.apellido, u.imagen
+                FROM evento_organizadores eo
+                JOIN usuario u ON eo.matricula = u.matricula
+                WHERE eo.id_evento IN (?)
+            `;
+            const [organizadores] = await pool.promise().query(sqlOrgs, [eventosIds]);
 
-            res.json({
-                matricula: usuario.matricula,
-                nombre: usuario.nombre,
-                apellido: usuario.apellido,
-                imagen: usuario.imagen,
-                rol: rolNombre,
-                eventos: listaEventos
+            organizadores.forEach(org => {
+                if (!orgsPorEvento[org.id_evento]) orgsPorEvento[org.id_evento] = [];
+                orgsPorEvento[org.id_evento].push({
+                    matricula: org.matricula.toString(),
+                    nombre: org.nombre,
+                    apellido: org.apellido,
+                    imagen: org.imagen
+                });
             });
+        }
+
+        // 4. Formatear respuesta
+        const listaEventos = eventos.map(ev => ({
+            id_evento: ev.id_evento,
+            titulo: ev.titulo,
+            descripcion: ev.descripcion,
+            fecha: ev.fecha,
+            cupo_maximo: ev.cupo_maximo,
+            
+            asistentes_registrados: ev.asistentes_registrados || 0, 
+
+            url_foto: ev.url_foto,
+            latitud: ev.latitud,
+            longitud: ev.longitud,
+            fecha_creacion: ev.fecha_creacion,
+            categoria: ev.categoria || 'General',
+            ubicacion_nombre: ev.ubicacion_nombre || 'Ubicación por definir',
+            es_organizador: Boolean(ev.es_organizador),
+            es_asistente: Boolean(ev.es_asistente),
+            organizadores: orgsPorEvento[ev.id_evento] || [] 
+        }));
+
+        let rolNombre = '';
+        switch (usuario.rol) {
+            case 1: rolNombre = 'Administrador'; break;
+            case 2: rolNombre = 'Asesor'; break;
+            case 3: rolNombre = 'Estudiante'; break;
+            default: rolNombre = 'Desconocido';
+        }
+
+        console.log({
+            matricula: usuario.matricula,
+            nombre: usuario.nombre,
+            apellido: usuario.apellido,
+            imagen: usuario.imagen,
+            rol: rolNombre,
+            eventos: listaEventos
         });
-    });
+        
+        res.json({
+            matricula: usuario.matricula,
+            nombre: usuario.nombre,
+            apellido: usuario.apellido,
+            imagen: usuario.imagen,
+            rol: rolNombre,
+            eventos: listaEventos
+        });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error al obtener eventos', error });
+    }
 };
 
 exports.aprobarAsesor = async (req, res) => {
@@ -835,28 +873,49 @@ exports.alternarConexion = async (req, res) => {
 exports.obtenerSugerencias = async (req, res) => {
     const miMatricula = req.usuario.matricula;
 
-    const sql = `
-        SELECT DISTINCT u.matricula, u.nombre, u.apellido, u.carrera, u.imagen, u.correo, u.rol,
-               (SELECT COUNT(*) FROM usuario_intereses ui2 
-                WHERE ui2.matricula = u.matricula 
-                AND ui2.id_interes IN (SELECT id_interes FROM usuario_intereses WHERE matricula = ?)
-               ) as coincidencias
-        FROM usuario u
-        JOIN usuario_intereses ui ON u.matricula = ui.matricula
-        WHERE u.matricula != ? 
-        AND u.estado = 1
-        AND u.matricula NOT IN (SELECT seguido_matricula FROM conexiones WHERE seguidor_matricula = ?)
-        AND ui.id_interes IN (SELECT id_interes FROM usuario_intereses WHERE matricula = ?)
-        ORDER BY coincidencias DESC
-        LIMIT 10
-    `;
+    try {
+        // --- PLAN A: Buscar por Intereses Comunes ---
+        // (Incluimos u.estado para evitar el error de Moshi en Android)
+        let sql = `
+            SELECT DISTINCT u.matricula, u.nombre, u.apellido, u.carrera, u.imagen, u.correo, u.rol, u.estado,
+                   (SELECT COUNT(*) FROM usuario_intereses ui2 
+                    WHERE ui2.matricula = u.matricula 
+                    AND ui2.id_interes IN (SELECT id_interes FROM usuario_intereses WHERE matricula = ?)
+                   ) as coincidencias
+            FROM usuario u
+            JOIN usuario_intereses ui ON u.matricula = ui.matricula
+            WHERE u.matricula != ? 
+            AND u.estado = 1
+            AND u.matricula NOT IN (SELECT seguido_matricula FROM conexiones WHERE seguidor_matricula = ?)
+            AND ui.id_interes IN (SELECT id_interes FROM usuario_intereses WHERE matricula = ?)
+            ORDER BY coincidencias DESC
+            LIMIT 10
+        `;
 
-    pool.query(sql, [miMatricula, miMatricula, miMatricula, miMatricula], async (err, results) => {
-        if (err) return res.status(500).json({ mensaje: 'Error al obtener sugerencias', err });
-        
-        // Formatear el Rol también aquí
+        // Usamos promesas para poder evaluar el resultado antes de enviar
+        let [results] = await pool.promise().query(sql, [miMatricula, miMatricula, miMatricula, miMatricula]);
+
+        // --- PLAN B: Si el Plan A no trajo nada (vacío), buscar gente aleatoria ---
+        if (results.length === 0) {
+            console.log("No hay coincidencias por interés, buscando usuarios generales...");
+            
+            const sqlBackup = `
+                SELECT u.matricula, u.nombre, u.apellido, u.carrera, u.imagen, u.correo, u.rol, u.estado,
+                       0 as coincidencias
+                FROM usuario u
+                WHERE u.matricula != ? 
+                AND u.estado = 1
+                AND u.matricula NOT IN (SELECT seguido_matricula FROM conexiones WHERE seguidor_matricula = ?)
+                ORDER BY RAND()
+                LIMIT 5
+            `;
+            // Sobreescribimos results con el plan B
+            [results] = await pool.promise().query(sqlBackup, [miMatricula, miMatricula]);
+        }
+
+        // --- FORMATEO DE RESPUESTA ---
         const resultadosFormateados = await Promise.all(results.map(async (u) => {
-             // Recuperar intereses para mostrarlos en los chips
+             // Recuperamos intereses para mostrarlos en la UI
              const [intereses] = await pool.promise().query(
                 `SELECT i.id_interes, i.nombre 
                  FROM usuario_intereses ui 
@@ -871,18 +930,23 @@ exports.obtenerSugerencias = async (req, res) => {
                 case 2: rolNombre = 'Asesor'; break;
                 case 3: rolNombre = 'Estudiante'; break;
             }
+            
             return {
                 ...u,
                 rol: rolNombre,
-                intereses: intereses,
-                siguiendo: false,
+                intereses: intereses, // Array de objetos {id, nombre}
+                siguiendo: false,     // Por lógica, si es sugerencia no lo sigo
                 total_publicaciones: 0,
                 publicacion_destacada: null
             };
         }));
 
         res.json(resultadosFormateados);
-    });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ mensaje: 'Error al obtener sugerencias', error });
+    }
 };
 
 // GET /intereses (Catálogo completo para mostrar en el selector)
@@ -948,7 +1012,7 @@ exports.obtenerMisConexiones = async (req, res) => {
     try {
         // 1. Obtener usuarios que YO sigo (tabla conexiones)
         const sql = `
-            SELECT u.matricula, u.nombre, u.apellido, u.imagen, u.carrera, u.rol, u.semestre, u.correo
+            SELECT u.matricula, u.nombre, u.apellido, u.imagen, u.carrera, u.rol, u.semestre, u.correo, u.estado
             FROM usuario u
             JOIN conexiones c ON u.matricula = c.seguido_matricula
             WHERE c.seguidor_matricula = ? AND u.estado = 1

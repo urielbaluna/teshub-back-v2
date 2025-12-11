@@ -25,7 +25,7 @@ exports.obtenerPendientes = async (req, res) => {
             JOIN usuario u ON i.matricula = u.matricula
             WHERE a.matricula_asesor = ? 
               AND a.estado = 1 
-              AND (p.estado = 'pendiente' OR p.estado = 'correcciones')
+              AND (p.estado = 'pendiente' OR p.estado = 'correcciones' OR p.estado = 'rechazado' OR p.estado IS NULL)
             ORDER BY p.fecha ASC
         `;
 
@@ -42,6 +42,8 @@ exports.obtenerPendientes = async (req, res) => {
             imagen: p.imagen_portada
         }));
 
+        console.log(`REVISIONES: Asesor ${matriculaAsesor} tiene ${publicaciones.length} tesis pendientes (incluyendo correcciones).`);
+
         res.json({ pendientes: respuesta });
 
     } catch (error) {
@@ -54,6 +56,7 @@ exports.obtenerPendientes = async (req, res) => {
 exports.revisarPublicacion = async (req, res) => {
     const matriculaAsesor = req.usuario.matricula;
     const { id_publi, nuevo_estado, comentarios } = req.body;
+    console.log(req.body)
 
     // Validar estado válido
     const estadosValidos = ['aprobado', 'rechazado', 'correcciones'];
@@ -87,11 +90,19 @@ exports.revisarPublicacion = async (req, res) => {
             [id_publi, matriculaAsesor, nuevo_estado, comentarios]
         );
 
-        // 2. Actualizar la publicación oficial
-        await pool.promise().query(
+        console.log("HISTORIAL GUARDADO. Intentando actualizar publicación...");
+        const [resultado] = await pool.promise().query(
             'UPDATE publicacion SET estado = ? WHERE id_publi = ?',
             [nuevo_estado, id_publi]
         );
+
+        console.log("ACTUALIZACIÓN EXITOSA. Filas afectadas:", resultado.affectedRows); 
+        
+        const [verificacion] = await pool.promise().query(
+            'SELECT * FROM revisiones_publicacion WHERE id_publi = ? ORDER BY id_revision DESC LIMIT 1',
+            [id_publi]
+        );
+        console.log("🔍 DATOS EN BD SEGÚN NODE:", verificacion);
 
         res.json({ mensaje: `Revisión registrada. Publicación marcada como: ${nuevo_estado}` });
 
